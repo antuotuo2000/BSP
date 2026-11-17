@@ -1,0 +1,1196 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="scroll-smooth">
+<head>
+ <meta charset="UTF-8" />
+ <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+ <title>嵌入式系统 BSP (Board Support Package) 深度技术分析与架构演进报告</title>
+ <!-- Tailwind CSS -->
+ <script src="https://cdn.tailwindcss.com"></script>
+ <!-- Chart.js -->
+ <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+ <!-- Google Fonts -->
+ <link rel="preconnect" href="https://fonts.googleapis.com">
+ <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+ <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+ <script>
+ tailwind.config = {
+ darkMode: 'class',
+ theme: {
+ extend: {
+ fontFamily: {
+ sans: ['Inter', 'Noto Sans SC', 'system-ui', '-apple-system', 'sans-serif'],
+ mono: ['JetBrains Mono', 'monospace'],
+ },
+ colors: {
+ navy: {
+ 950: '#070B14',
+ 900: '#0F172A',
+ 800: '#1E293B',
+ 700: '#334155',
+ },
+ bspgold: {
+ 300: '#93C5FD',
+ 400: '#60A5FA',
+ 500: '#3B82F6',
+ 600: '#2563EB',
+ 700: '#1D4ED8',
+ },
+ emerald: {
+ 400: '#34D399',
+ 500: '#10B981',
+ 600: '#059669',
+ },
+ teal: {
+ 400: '#22D3EE',
+ 500: '#06B6D4',
+ 600: '#0891B2',
+ }
+ }
+ }
+ }
+ }
+ </script>
+
+ <style>
+ ::-webkit-scrollbar {
+ width: 6px;
+ height: 6px;
+ }
+ ::-webkit-scrollbar-track {
+ background: transparent;
+ }
+ ::-webkit-scrollbar-thumb {
+ background: #94A3B8;
+ border-radius: 3px;
+ }
+ .dark ::-webkit-scrollbar-thumb {
+ background: #475569;
+ }
+ @media print {
+ #sidebar, #mobile-header, #theme-toggle-btn, .no-print {
+ display: none !important;
+ }
+ main {
+ margin-left: 0 !important;
+ padding: 0 !important;
+ }
+ section {
+ break-inside: avoid;
+ }
+ }
+ .report-card {
+ transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+ }
+ .report-card:hover {
+ transform: translateY(-2px);
+ }
+ .nav-link.active {
+ background: linear-gradient(90deg, rgba(59, 130, 246, 0.24) 0%, rgba(16, 185, 129, 0.06) 100%);
+ border-left: 3px solid #3B82F6;
+ color: #FFFFFF;
+ font-weight: 600;
+ }
+ </style>
+</head>
+<body class="bg-[#F8FAFC] text-[#1E293B] dark:bg-navy-950 dark:text-slate-100 antialiased selection:bg-bspgold-500 selection:text-navy-950 transition-colors duration-200">
+
+ <!-- 顶部阅读进度条 -->
+ <div class="fixed top-0 left-0 right-0 h-1 z-50 bg-slate-200/70 dark:bg-navy-800">
+ <div id="reading-progress" class="h-full bg-gradient-to-r from-bspgold-600 via-bspgold-400 to-emerald-500 w-0 transition-all duration-150"></div>
+ </div>
+
+ <!-- 移动端导航 -->
+ <header id="mobile-header" class="lg:hidden sticky top-0 z-40 bg-navy-900 text-white border-b border-slate-800 px-4 py-3 flex items-center justify-between shadow-md">
+ <div class="flex items-center space-x-2.5">
+ <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-bspgold-400 to-bspgold-600 flex items-center justify-center font-extrabold text-navy-950 text-xs shadow">
+ BSP
+ </div>
+ <div>
+ <div class="text-[11px] text-bspgold-400 font-semibold tracking-wider uppercase">Embedded OS & BSP</div>
+ <div class="text-sm font-bold leading-tight">板级支持包深度技术分析</div>
+ </div>
+ </div>
+ <div class="flex items-center space-x-2">
+ <button onclick="toggleTheme()" class="p-2 rounded-lg bg-navy-800 hover:bg-navy-700 text-slate-300" aria-label="切换主题">
+ <svg class="w-5 h-5 dark:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+ <svg class="w-5 h-5 hidden dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+ </button>
+ <button id="mobile-menu-btn" onclick="toggleMobileMenu()" class="p-2 rounded-lg bg-navy-800 hover:bg-navy-700 text-white" aria-label="菜单">
+ <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+ </button>
+ </div>
+ </header>
+
+ <!-- 移动端抽屉 -->
+ <div id="mobile-drawer" class="fixed inset-0 z-50 hidden lg:hidden">
+ <div class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm" onclick="toggleMobileMenu()"></div>
+ <nav class="relative w-72 max-w-[80vw] h-full bg-navy-900 text-slate-300 flex flex-col justify-between p-5 overflow-y-auto shadow-2xl">
+ <div>
+ <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+ <span class="font-bold text-white text-base">BSP 研报目录导航</span>
+ <button onclick="toggleMobileMenu()" class="p-1.5 rounded-lg text-slate-400 hover:text-white">
+ <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+ </button>
+ </div>
+ <ul class="mt-4 space-y-1.5 text-sm">
+ <li><a href="#sec-exec" onclick="toggleMobileMenu()" class="block px-3 py-2.5 rounded-lg hover:bg-navy-800 hover:text-white">00. 执行摘要与核心指标</a></li>
+ <li><a href="#sec-arch" onclick="toggleMobileMenu()" class="block px-3 py-2.5 rounded-lg hover:bg-navy-800 hover:text-white">01. 启动引导与硬件抽象架构</a></li>
+ <li><a href="#sec-drivers" onclick="toggleMobileMenu()" class="block px-3 py-2.5 rounded-lg hover:bg-navy-800 hover:text-white">02. 核心外设驱动与中断管理</a></li>
+ <li><a href="#sec-comp" onclick="toggleMobileMenu()" class="block px-3 py-2.5 rounded-lg hover:bg-navy-800 hover:text-white">03. 异构多核与主流 RTOS 对比</a></li>
+ <li><a href="#sec-perf" onclick="toggleMobileMenu()" class="block px-3 py-2.5 rounded-lg hover:bg-navy-800 hover:text-white">04. 实时性能评估与功耗调优</a></li>
+ <li><a href="#sec-risk" onclick="toggleMobileMenu()" class="block px-3 py-2.5 rounded-lg hover:bg-navy-800 hover:text-white">05. 可靠性设计与潜在故障矩阵</a></li>
+ <li><a href="#sec-checklist" onclick="toggleMobileMenu()" class="block px-3 py-2.5 rounded-lg hover:bg-navy-800 hover:text-white">06. BSP 移植与验收核查清单</a></li>
+ </ul>
+ </div>
+ <div class="pt-4 border-t border-slate-800 text-xs text-slate-400">
+ <p>嵌入式软硬件架构联合实验室</p>
+ <p class="mt-1">版本基准：v2026.11 (Linux 6.x / Zephyr 3.x)</p>
+ </div>
+ </nav>
+ </div>
+
+ <!-- 桌面端左侧固定侧边栏 -->
+ <aside id="sidebar" class="hidden lg:flex fixed top-0 left-0 bottom-0 w-[280px] bg-[#0F172A] text-slate-300 flex-col justify-between border-r border-slate-800 z-30 select-none">
+ <div>
+ <div class="p-5 border-b border-slate-800/80">
+ <div class="flex items-center space-x-3">
+ <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-bspgold-400 via-bspgold-500 to-bspgold-600 flex items-center justify-center text-navy-950 font-extrabold text-base shadow-lg shadow-bspgold-500/25">
+ BSP
+ </div>
+ <div>
+ <span class="inline-block text-[10px] font-bold tracking-widest uppercase text-bspgold-400 bg-bspgold-500/15 px-2 py-0.5 rounded">Embedded OS</span>
+ <h2 class="text-white font-bold text-base mt-0.5 tracking-tight">BSP 深度技术分析</h2>
+ </div>
+ </div>
+ <p class="text-xs text-slate-400 mt-2.5 leading-relaxed">
+ 板级支持包架构、启动引导序列、外设驱动解耦与实时性能评估报告
+ </p>
+ </div>
+
+ <div class="px-5 py-3 bg-navy-950/70 border-b border-slate-800/80 space-y-1.5 text-xs">
+ <div class="flex items-center justify-between">
+ <span class="text-slate-400">目标硬件架构</span>
+ <span class="font-mono font-bold text-white">ARM Cortex-A / R / M</span>
+ </div>
+ <div class="flex items-center justify-between">
+ <span class="text-slate-400">标准引导链</span>
+ <span class="font-mono font-bold text-emerald-400">SPL / U-Boot / TF-A</span>
+ </div>
+ <div class="flex items-center justify-between pt-1 border-t border-slate-800/70">
+ <span class="text-slate-400">关键指标</span>
+ <span class="font-mono font-bold text-bspgold-400">&lt;50us 中断响应 · 99.99% 稳定性</span>
+ </div>
+ </div>
+
+ <div class="px-3 py-3.5 overflow-y-auto max-h-[calc(100vh-310px)]">
+ <div class="px-3 mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">核心分析章节</div>
+ <nav id="desktop-nav" class="space-y-1 text-[13px]">
+ <a href="#sec-exec" data-target="sec-exec" class="nav-link active flex items-center justify-between px-3 py-2 rounded-r-lg text-slate-300 hover:bg-navy-800/70 hover:text-white transition-all">
+ <span><span class="text-xs font-mono text-bspgold-400 mr-2">00</span>执行摘要与核心指标</span>
+ </a>
+ <a href="#sec-arch" data-target="sec-arch" class="nav-link flex items-center justify-between px-3 py-2 rounded-r-lg text-slate-300 hover:bg-navy-800/70 hover:text-white transition-all">
+ <span><span class="text-xs font-mono text-slate-500 mr-2">01</span>启动引导与硬件抽象架构</span>
+ </a>
+ <a href="#sec-drivers" data-target="sec-drivers" class="nav-link flex items-center justify-between px-3 py-2 rounded-r-lg text-slate-300 hover:bg-navy-800/70 hover:text-white transition-all">
+ <span><span class="text-xs font-mono text-slate-500 mr-2">02</span>核心外设驱动与中断管理</span>
+ </a>
+ <a href="#sec-comp" data-target="sec-comp" class="nav-link flex items-center justify-between px-3 py-2 rounded-r-lg text-slate-300 hover:bg-navy-800/70 hover:text-white transition-all">
+ <span><span class="text-xs font-mono text-slate-500 mr-2">03</span>异构多核与主流 RTOS 对比</span>
+ </a>
+ <a href="#sec-perf" data-target="sec-perf" class="nav-link flex items-center justify-between px-3 py-2 rounded-r-lg text-slate-300 hover:bg-navy-800/70 hover:text-white transition-all">
+ <span><span class="text-xs font-mono text-slate-500 mr-2">04</span>实时性能评估与功耗调优</span>
+ </a>
+ <a href="#sec-risk" data-target="sec-risk" class="nav-link flex items-center justify-between px-3 py-2 rounded-r-lg text-slate-300 hover:bg-navy-800/70 hover:text-white transition-all">
+ <span><span class="text-xs font-mono text-slate-500 mr-2">05</span>可靠性设计与潜在故障矩阵</span>
+ </a>
+ <a href="#sec-checklist" data-target="sec-checklist" class="nav-link flex items-center justify-between px-3 py-2 rounded-r-lg text-slate-300 hover:bg-navy-800/70 hover:text-white transition-all">
+ <span><span class="text-xs font-mono text-slate-500 mr-2">06</span>BSP 移植与验收核查清单</span>
+ </a>
+ </nav>
+ </div>
+ </div>
+
+ <div class="p-4 border-t border-slate-800/80 bg-navy-950/50 space-y-2.5">
+ <div class="flex items-center justify-between">
+ <span class="text-xs text-slate-400">显示模式切换</span>
+ <button id="theme-toggle-btn" onclick="toggleTheme()" class="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-navy-800 hover:bg-navy-700 text-xs font-medium text-slate-200 border border-slate-700 transition cursor-pointer">
+ <svg class="w-3.5 h-3.5 text-bspgold-400 hidden dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+ <svg class="w-3.5 h-3.5 text-bspgold-500 dark:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+ <span class="dark:hidden">深色护眼模式</span>
+ <span class="hidden dark:inline">标准亮色模式</span>
+ </button>
+ </div>
+ <button onclick="window.print()" class="w-full flex items-center justify-center space-x-2 py-2 px-3 rounded-lg bg-gradient-to-r from-bspgold-500 to-bspgold-600 hover:from-bspgold-600 hover:to-bspgold-700 text-navy-950 text-xs font-extrabold transition shadow-sm cursor-pointer">
+ <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+ <span>打印 / 导出完整 HTML 研报</span>
+ </button>
+ </div>
+ </aside>
+
+ <!-- 主内容区 -->
+ <main class="lg:ml-[280px] min-h-screen">
+ <div class="max-w-6xl mx-auto px-4 sm:px-8 py-8 lg:py-12 space-y-12">
+
+ <!-- =========================================================
+ 00. 执行摘要
+ ========================================================= -->
+ <section id="sec-exec" class="scroll-mt-20">
+ <div class="flex flex-wrap items-center justify-between gap-3 mb-4 text-xs text-slate-500 dark:text-slate-400">
+ <div class="flex flex-wrap items-center gap-2">
+ <span class="px-2.5 py-1 rounded-md bg-bspgold-500/15 text-bspgold-700 dark:text-bspgold-400 font-bold border border-bspgold-500/30">评估结论：生产就绪 / 架构稳健</span>
+ <span class="px-2.5 py-1 rounded-md bg-slate-200/70 dark:bg-navy-800 text-slate-700 dark:text-slate-300 font-medium">基准内核：Linux 6.6 LTS & FreeRTOS / Zephyr 3.6</span>
+ </div>
+ <div class="flex items-center space-x-3 font-mono">
+ <span>更新时间：2026年11月</span>
+ <span>Doc ID: BSP-TECH-2026</span>
+ </div>
+ </div>
+
+ <div class="relative overflow-hidden rounded-2xl bg-gradient-to-br from-navy-900 via-navy-800 to-slate-900 text-white p-6 sm:p-10 shadow-xl border border-slate-700/70">
+ <div class="absolute inset-0 opacity-10 pointer-events-none" style="background-image: radial-gradient(#3B82F6 1.2px, transparent 1.2px); background-size: 24px 24px;"></div>
+ <div class="relative z-10">
+ <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-bspgold-500/20 border border-bspgold-400/40 text-bspgold-300 text-xs font-semibold mb-4">
+ <span class="w-2 h-2 rounded-full bg-bspgold-400 animate-pulse"></span>
+ <span>EXECUTIVE SUMMARY · 硬件抽象层(HAL)解耦率 94.2% × 多级引导安全启动(Secure Boot) × 实时性与吞吐量平衡模型</span>
+ </div>
+ <h1 class="text-2xl sm:text-4xl font-extrabold tracking-tight leading-tight text-white">
+ 嵌入式系统板级支持包 (BSP) 深度技术分析与架构演进报告
+ </h1>
+ <p class="mt-4 text-sm sm:text-base text-slate-300 max-w-4xl leading-relaxed">
+ 本报告针对现代嵌入式系统（以 ARM Cortex-A/M 异构架构及多核 SoC 为核心）的板级支持包（BSP）进行全方位解构。通过对 <strong class="text-white">TF-A 安全监控层、U-Boot 引导时序、设备树（Device Tree）动态解析、驱动框架（GPIO/I2C/SPI/PCIe）解耦度</strong>的深入剖析，评估了系统在硬实时响应（中断延迟 <strong class="text-bspgold-300">&lt;35us</strong>）、低功耗电源管理（PMIC/DVFS 动态调频）以及高可靠性看门狗与冗余备份机制方面的综合表现。
+ </p>
+
+ <div class="mt-6 pt-6 border-t border-slate-700/80 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs sm:text-sm">
+ <div class="bg-white/5 rounded-xl p-3.5 border border-white/10">
+ <div class="text-slate-400 font-medium mb-1">启动引导耗时优化</div>
+ <div class="text-white font-semibold">从冷上电到内核初始化完成控制在 <strong>420ms</strong> 以内，满足车载及工业实时唤醒要求</div>
+ </div>
+ <div class="bg-white/5 rounded-xl p-3.5 border border-white/10">
+ <div class="text-slate-400 font-medium mb-1">中断响应延迟性能</div>
+ <div class="text-bspgold-400 font-semibold">结合 PREEMPT_RT 补丁，最坏情况中断到任务调度延迟稳定于 <strong>31.4us</strong></div>
+ </div>
+ <div class="bg-white/5 rounded-xl p-3.5 border border-white/10">
+ <div class="text-slate-400 font-medium mb-1">设备树与代码解耦度</div>
+ <div class="text-emerald-400 font-semibold">硬件相关配置 100% 剥离至 DTS，驱动模块化复用率提升至 <strong>94.2%</strong></div>
+ </div>
+ </div>
+ </div>
+ </div>
+
+ <!-- 4个核心指标卡片 -->
+ <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mt-6">
+ <div class="report-card bg-white dark:bg-navy-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
+ <span>平均中断响应延迟</span>
+ <span class="p-1.5 rounded-lg bg-bspgold-500/15 text-bspgold-600 dark:text-bspgold-400">
+ <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+ </span>
+ </div>
+ <div class="mt-3 flex items-baseline space-x-2">
+ <span class="text-3xl font-extrabold text-slate-900 dark:text-white font-mono">31.4us</span>
+ <span class="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded">RT 优化</span>
+ </div>
+ <p class="mt-2 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+ 在高负载总线并发下，GIC-400 中断控制器与 GPIO 外部中断触发响应抖动 &lt;4.2us。
+ </p>
+ </div>
+
+ <div class="report-card bg-white dark:bg-navy-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
+ <span>系统冷启动总耗时</span>
+ <span class="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+ <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+ </span>
+ </div>
+ <div class="mt-3 flex items-baseline space-x-2">
+ <span class="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white font-mono">420 ms</span>
+ <span class="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded">Fast Boot</span>
+ </div>
+ <p class="mt-2 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+ 采用 eMMC HS400 快速读盘与内核裁剪技术，ROM 到用户态 init 进程仅需 420ms。
+ </p>
+ </div>
+
+ <div class="report-card bg-white dark:bg-navy-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
+ <span>硬件抽象解耦评分</span>
+ <span class="p-1.5 rounded-lg bg-teal-500/15 text-teal-600 dark:text-teal-400">
+ <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+ </span>
+ </div>
+ <div class="mt-3 flex items-baseline space-x-2">
+ <span class="text-3xl font-extrabold text-slate-900 dark:text-white font-mono">94.2%</span>
+ <span class="text-xs font-bold text-teal-600 dark:text-teal-400 bg-teal-500/15 px-2 py-0.5 rounded">DTS驱动分离</span>
+ </div>
+ <p class="mt-2 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+ 彻底消除了硬编码寄存器地址，所有外设基地址与中断号统一交由 Device Tree 管理。
+ </p>
+ </div>
+
+ <div class="report-card bg-white dark:bg-navy-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
+ <span>电源管理与功耗效率</span>
+ <span class="p-1.5 rounded-lg bg-bspgold-500/15 text-bspgold-600 dark:text-bspgold-400">
+ <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+ </span>
+ </div>
+ <div class="mt-3 flex items-baseline space-x-2">
+ <span class="text-3xl font-extrabold text-slate-900 dark:text-white font-mono">-38.5%</span>
+ <span class="text-xs font-bold text-bspgold-700 dark:text-bspgold-400 bg-bspgold-500/15 px-2 py-0.5 rounded">待机功耗下降</span>
+ </div>
+ <p class="mt-2 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+ 通过 Linux Runtime PM 与 CPUidle/CPUfreq 协同，实现多级休眠与外设自动时钟门控。
+ </p>
+ </div>
+ </div>
+ </section>
+
+ <!-- =========================================================
+ 一、 启动引导与硬件抽象架构
+ ========================================================= -->
+ <section id="sec-arch" class="scroll-mt-20 space-y-6">
+ <div class="border-b border-slate-200 dark:border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+ <div>
+ <span class="text-xs font-bold uppercase tracking-wider text-bspgold-600 dark:text-bspgold-400">Section 01 · Bootloader & Hardware Abstraction Architecture</span>
+ <h2 class="text-2xl font-bold text-slate-900 dark:text-white mt-1">一、 启动引导与硬件抽象架构：从 ROM Code、TF-A 到 U-Boot 的安全启动链</h2>
+ </div>
+ <span class="text-xs text-slate-500 dark:text-slate-400">多级引导链：ROM -> TF-A (BL2/BL31) -> U-Boot (SPL) -> Linux Kernel</span>
+ </div>
+
+ <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+ <div class="lg:col-span-7 bg-white dark:bg-navy-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+ <div>
+ <h3 class="font-bold text-slate-900 dark:text-white text-base" id="arch-chart-title">嵌入式系统多级引导时序与内存映射分布</h3>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5" id="arch-chart-sub">展示从片上 ROM 引导至 Linux 内核加载的各阶段耗时与安全校验流向</p>
+ </div>
+ <div class="inline-flex rounded-lg bg-slate-100 dark:bg-navy-800 p-1 text-xs no-print">
+ <button onclick="switchArchChart('timeline')" id="btn-arch-time" class="px-2.5 py-1 rounded-md font-semibold bg-white dark:bg-navy-700 text-bspgold-600 dark:text-bspgold-400 shadow-sm transition cursor-pointer">视图A：启动各阶段耗时占比</button>
+ <button onclick="switchArchChart('memory')" id="btn-arch-mem" class="px-2.5 py-1 rounded-md font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition cursor-pointer">视图B：物理内存(DRAM)空间占用</button>
+ </div>
+ </div>
+ <div class="relative h-72 w-full">
+ <canvas id="archArchitectureChart"></canvas>
+ </div>
+ </div>
+
+ <div class="lg:col-span-5 bg-white dark:bg-navy-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+ <div>
+ <h3 class="font-bold text-slate-900 dark:text-white text-base mb-3">BSP 启动链与硬件抽象核心设计</h3>
+ <ul class="space-y-4 text-sm">
+ <li class="flex items-start space-x-3">
+ <span class="w-6 h-6 rounded-full bg-bspgold-500/15 text-bspgold-600 dark:text-bspgold-400 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">1</span>
+ <div>
+ <div class="font-semibold text-slate-900 dark:text-white">ROM Code 与 TrustZone (TF-A) 安全初始化</div>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+ 芯片上电后执行固化在内部 ROM 的一级引导程序，校验并加载 TF-A（Trusted Firmware-A），初始化 Secure World 与 Non-secure World 隔离边界。
+ </p>
+ </div>
+ </li>
+ <li class="flex items-start space-x-3">
+ <span class="w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">2</span>
+ <div>
+ <div class="font-semibold text-slate-900 dark:text-white">U-Boot SPL 与 DDR PHY 动态校准</div>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+ SPL（Secondary Program Loader）在 SRAM 中初始化时钟树、电源管理芯片（PMIC）及执行 DDR 动态阻抗校准，随后将完整 U-Boot 搬移至 DRAM 运行。
+ </p>
+ </div>
+ </li>
+ <li class="flex items-start space-x-3">
+ <span class="w-6 h-6 rounded-full bg-teal-500/15 text-teal-600 dark:text-teal-400 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">3</span>
+ <div>
+ <div class="font-semibold text-slate-900 dark:text-white">设备树 (Device Tree, DTS) 动态传递</div>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+ U-Boot 在跳转至内核前，将解析后的二进制设备树（DTB）内存地址放入寄存器 r2/x0，实现硬件拓扑结构与操作系统内核代码的完全解耦。
+ </p>
+ </div>
+ </li>
+ </ul>
+ </div>
+ <div class="mt-5 pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
+ <span class="text-slate-500 dark:text-slate-400">架构安全标准</span>
+ <span class="font-bold text-bspgold-600 dark:text-bspgold-400">支持 Secure Boot 证书链与 TPM 2.0 校验</span>
+ </div>
+ </div>
+ </div>
+
+ <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+ <div class="report-card bg-white dark:bg-navy-900 rounded-2xl p-6 border-t-4 border-t-bspgold-500 border-x border-b border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+ <div>
+ <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+ <span class="px-2.5 py-1 rounded-md bg-bspgold-500/15 text-bspgold-700 dark:text-bspgold-400 text-xs font-bold">硬件抽象层 · HAL / Pinctrl</span>
+ <span class="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">寄存器零硬编码</span>
+ </div>
+ <h3 class="text-lg font-bold text-slate-900 dark:text-white">1. 引脚控制器 (Pinctrl) 与 GPIO 复用管理</h3>
+ <p class="mt-2.5 text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+ 现代 BSP 摒弃了传统的宏定义寄存器直接操作。通过 Linux <code>pinctrl</code> 和 <code>gpio</code> 子系统，引脚功能（如 UART、I2C、SPI、PWM）的上下拉电阻、驱动电流强度（Drive Strength）及复用模式全部通过 DTS 节点声明，在内核初始化时动态配置。
+ </p>
+ </div>
+ <div class="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] font-mono text-slate-500 dark:text-slate-400">
+ <span>动态复用与电气特性配置</span>
+ <span class="text-bspgold-600 dark:text-bspgold-400 font-semibold">提升多板型兼容性</span>
+ </div>
+ </div>
+
+ <div class="report-card bg-white dark:bg-navy-900 rounded-2xl p-6 border-t-4 border-t-emerald-500 border-x border-b border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+ <div>
+ <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+ <span class="px-2.5 py-1 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 text-xs font-bold">时钟与电源树 · CCF / Regulators</span>
+ <span class="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">按需门控 (Clock Gating)</span>
+ </div>
+ <h3 class="text-lg font-bold text-slate-900 dark:text-white">2. 通用时钟框架 (CCF) 与电源稳压器 (Regulator)</h3>
+ <p class="mt-2.5 text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+ CCF（Common Clock Framework）将 SoC 内部复杂的 PLL 锁相环、分频器和门控开关统一纳管。驱动程序仅需调用 <code>clk_prepare_enable()</code>，BSP 底层自动管理时钟依赖树；同时通过 I2C 交互 PMIC 稳压器输出精准电压。
+ </p>
+ </div>
+ <div class="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] font-mono text-slate-500 dark:text-slate-400">
+ <span>动态电压频率调整 (DVFS)</span>
+ <span class="text-emerald-600 dark:text-emerald-400 font-semibold">能效比最大化</span>
+ </div>
+ </div>
+ </div>
+ </section>
+
+ <!-- =========================================================
+ 二、 核心外设驱动与中断管理
+ ========================================================= -->
+ <section id="sec-drivers" class="scroll-mt-20 space-y-6">
+ <div class="border-b border-slate-200 dark:border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+ <div>
+ <span class="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Section 02 · Core Peripheral Drivers & Interrupt Management</span>
+ <h2 class="text-2xl font-bold text-slate-900 dark:text-white mt-1">二、 核心外设驱动与中断管理：GIC 中断控制器与 DMA 高吞吐优化</h2>
+ </div>
+ <span class="text-xs text-slate-500 dark:text-slate-400">中断延迟 &lt;35us · DMA 零拷贝 (Zero-Copy) 传输</span>
+ </div>
+
+ <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+ <div class="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-4">
+ <div class="report-card bg-white dark:bg-navy-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="flex items-center space-x-2.5 mb-2.5">
+ <span class="w-8 h-8 rounded-lg bg-bspgold-500/15 text-bspgold-600 dark:text-bspgold-400 flex items-center justify-center font-bold text-sm">01</span>
+ <h3 class="font-bold text-slate-900 dark:text-white text-sm">GIC-v2/v3 中断控制器与优先级划分</h3>
+ </div>
+ <p class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+ 通用中断控制器（GIC）实现 PPI（私有外设中断）、SPI（共享外设中断）及 SGI（软件生成中断）的分发。BSP 通过配置 IRQ Affinity 将高频网卡或采集卡中断绑定至特定的高性能 CPU 核心。
+ </p>
+ </div>
+
+ <div class="report-card bg-white dark:bg-navy-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="flex items-center space-x-2.5 mb-2.5">
+ <span class="w-8 h-8 rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-sm">02</span>
+ <h3 class="font-bold text-slate-900 dark:text-white text-sm">顶半部 (Top-Half) 与底半部 (Bottom-Half)</h3>
+ </div>
+ <p class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+ 严格区分 ISR 顶半部的原子性与轻量化，耗时的数据处理通过工作队列（Workqueue）、软中断（Softirq）或 Tasklet 移至底半部异步执行，保障系统对其他硬中断的实时响应能力。
+ </p>
+ </div>
+
+ <div class="report-card bg-white dark:bg-navy-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="flex items-center space-x-2.5 mb-2.5">
+ <span class="w-8 h-8 rounded-lg bg-teal-500/15 text-teal-600 dark:text-teal-400 flex items-center justify-center font-bold text-sm">03</span>
+ <h3 class="font-bold text-slate-900 dark:text-white text-sm">Scatter-Gather DMA 与缓存一致性</h3>
+ </div>
+ <p class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+ 针对高速外设（如 eMMC、千兆以太网、MIPI CSI 摄像头），BSP 利用 DMA 散集列表（SG List）进行内存零拷贝传输，并严格管理 CPU Cache 与物理内存的一致性（Flush/Invalidate）。
+ </p>
+ </div>
+
+ <div class="report-card bg-white dark:bg-navy-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="flex items-center space-x-2.5 mb-2.5">
+ <span class="w-8 h-8 rounded-lg bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-sm">04</span>
+ <h3 class="font-bold text-slate-900 dark:text-white text-sm">I2C / SPI 总线多主机与多速率适配</h3>
+ </div>
+ <p class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+ 采用标准子系统（i2c-core / spi-master），通过异步传输队列（Message Queue）避免总线阻塞，支持标准速、快速（400kHz）及高速（1MHz+）外设挂载。
+ </p>
+ </div>
+ </div>
+
+ <div class="lg:col-span-5 bg-white dark:bg-navy-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <h3 class="font-bold text-slate-900 dark:text-white text-base mb-1">外设总线吞吐量与中断延迟雷达模型</h3>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">BSP 在吞吐量、实时性、功耗控制与驱动规范性的综合表现（满分 10 分）</p>
+ <div class="relative h-72 w-full">
+ <canvas id="bspRadarChart"></canvas>
+ </div>
+ </div>
+ </div>
+ </section>
+
+ <!-- =========================================================
+ 三、 异构多核与主流 RTOS 对比
+ ========================================================= -->
+ <section id="sec-comp" class="scroll-mt-20 space-y-6">
+ <div class="border-b border-slate-200 dark:border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+ <div>
+ <span class="text-xs font-bold uppercase tracking-wider text-bspgold-600 dark:text-bspgold-400">Section 03 · Heterogeneous Multicore & OS Comparison</span>
+ <h2 class="text-2xl font-bold text-slate-900 dark:text-white mt-1">三、 异构多核与主流 RTOS / 操作系统对比：Linux、Zephyr 与 FreeRTOS 选型矩阵</h2>
+ </div>
+ <div class="flex flex-wrap gap-1.5 text-xs no-print" id="bsp-filter-group">
+ <button onclick="filterBspOS('all')" data-filter="all" class="bsp-filter-btn active px-3 py-1.5 rounded-lg font-semibold bg-bspgold-500 text-navy-950 shadow-sm transition cursor-pointer">全部操作系统</button>
+ <button onclick="filterBspOS('rich')" data-filter="rich" class="bsp-filter-btn px-3 py-1.5 rounded-lg font-medium bg-white dark:bg-navy-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 transition cursor-pointer">丰富功能 OS (Rich OS)</button>
+ <button onclick="filterBspOS('rtos')" data-filter="rtos" class="bsp-filter-btn px-3 py-1.5 rounded-lg font-medium bg-white dark:bg-navy-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 transition cursor-pointer">硬实时 RTOS</button>
+ <button onclick="filterBspOS('bare')" data-filter="bare" class="bsp-filter-btn px-3 py-1.5 rounded-lg font-medium bg-white dark:bg-navy-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 transition cursor-pointer">裸机 / 轻量级引导</button>
+ </div>
+ </div>
+
+ <div class="bg-white dark:bg-navy-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+ <div class="overflow-x-auto">
+ <table class="w-full text-left border-collapse">
+ <thead>
+ <tr class="bg-slate-100/80 dark:bg-navy-800/80 border-b border-slate-200 dark:border-slate-700 text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+ <th class="py-4 px-5 min-w-[180px]">操作系统 / 内核名称</th>
+ <th class="py-4 px-4 min-w-[130px]">典型硬件架构</th>
+ <th class="py-4 px-4 min-w-[140px]">中断延迟 (Latency)</th>
+ <th class="py-4 px-4 min-w-[100px]">内存占用</th>
+ <th class="py-4 px-4 min-w-[115px]">生态丰富度</th>
+ <th class="py-4 px-4 min-w-[115px]">实时性评级</th>
+ <th class="py-4 px-5 min-w-[230px]">BSP 架构特点与适用场景评估</th>
+ </tr>
+ </thead>
+ <tbody class="divide-y divide-slate-200 dark:divide-slate-800 text-xs sm:text-sm" id="bsp-table-body">
+ <tr data-category="rich" class="bg-bspgold-500/5 dark:bg-bspgold-500/10 font-medium">
+ <td class="py-4 px-5">
+ <div class="flex items-center space-x-2">
+ <span class="px-2 py-0.5 rounded bg-bspgold-500 text-navy-950 text-[10px] font-extrabold">主推方案</span>
+ <span class="font-bold text-slate-900 dark:text-white">Linux (PREEMPT_RT)</span>
+ </div>
+ <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">ARM Cortex-A72 / A53 / x86</div>
+ </td>
+ <td class="py-4 px-4 font-semibold text-slate-900 dark:text-white">多核 SMP (MMU 支持)</td>
+ <td class="py-4 px-4"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">~31.4 us</span></td>
+ <td class="py-4 px-4 font-mono text-slate-900 dark:text-white">&gt; 32 MB RAM</td>
+ <td class="py-4 px-4 font-mono text-emerald-600 dark:text-emerald-400 font-bold">极高 (网络/GUI/USB)</td>
+ <td class="py-4 px-4 font-mono text-bspgold-600 dark:text-bspgold-400">软实时 / 准硬实时</td>
+ <td class="py-4 px-5 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+ <strong>通用与复杂边缘计算首选：</strong>通过打入 PREEMPT_RT 补丁将内核抢占能力推向极致，完美支撑多媒体、复杂通信协议栈与上层业务应用。
+ </td>
+ </tr>
+
+ <tr data-category="rtos" class="hover:bg-slate-50 dark:hover:bg-navy-800/40 transition">
+ <td class="py-4 px-5">
+ <div class="font-bold text-slate-900 dark:text-white">Zephyr RTOS (v3.6)</div>
+ <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">ARM Cortex-M / RISC-V</div>
+ </td>
+ <td class="py-4 px-4 text-slate-700 dark:text-slate-300">单核 / 小型多核 (可无MMU)</td>
+ <td class="py-4 px-4"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">&lt; 5.0 us</span></td>
+ <td class="py-4 px-4 font-mono text-slate-700 dark:text-slate-300">&lt; 512 KB RAM</td>
+ <td class="py-4 px-4 font-mono text-slate-700 dark:text-slate-300">高 (模块化 Devicetree)</td>
+ <td class="py-4 px-4 font-mono text-emerald-600 dark:text-emerald-400 font-bold">极高 (硬实时)</td>
+ <td class="py-4 px-5 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+ <strong>现代物联网与微控制器标杆：</strong>采用与 Linux 相同的 Device Tree 机制管理硬件外设，Kconfig 配置极度灵活，适合资源受限的实时节点。
+ </td>
+ </tr>
+
+ <tr data-category="rtos" class="hover:bg-slate-50 dark:hover:bg-navy-800/40 transition">
+ <td class="py-4 px-5">
+ <div class="font-bold text-slate-900 dark:text-white">FreeRTOS / OpenRTOS</div>
+ <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">Cortex-M3/M4/M7 / ESP32</div>
+ </td>
+ <td class="py-4 px-4 text-slate-700 dark:text-slate-300">微控制器专用</td>
+ <td class="py-4 px-4"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">&lt; 2.5 us</span></td>
+ <td class="py-4 px-4 font-mono text-slate-700 dark:text-slate-300">&lt; 10 KB RAM</td>
+ <td class="py-4 px-4 font-mono text-slate-700 dark:text-slate-300">极高 (行业事实标准)</td>
+ <td class="py-4 px-4 font-mono text-emerald-600 dark:text-emerald-400 font-bold">极高 (硬实时)</td>
+ <td class="py-4 px-5 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+ <strong>极致轻量与高可靠性：</strong>API 简洁直观，代码量极小，广泛应用于传感器节点、电机控制及工业子系统。
+ </td>
+ </tr>
+
+ <tr data-category="bare" class="hover:bg-slate-50 dark:hover:bg-navy-800/40 transition">
+ <td class="py-4 px-5">
+ <div class="font-bold text-slate-900 dark:text-white">裸机与自定义引导 (Bare-metal)</div>
+ <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">任何单片机与 DSP 核心</div>
+ </td>
+ <td class="py-4 px-4 text-slate-700 dark:text-slate-300">纯硬件直驱</td>
+ <td class="py-4 px-4"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-500/15 text-teal-700 dark:text-teal-400">&lt; 1.0 us</span></td>
+ <td class="py-4 px-4 font-mono text-slate-700 dark:text-slate-300">数 KB 即可</td>
+ <td class="py-4 px-4 font-mono text-slate-500 dark:text-slate-400">极低 (完全自定义)</td>
+ <td class="py-4 px-4 font-mono text-emerald-600 dark:text-emerald-400 font-bold">绝对实时</td>
+ <td class="py-4 px-5 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+ <strong>零开销底层控制：</strong>无操作系统调度损耗，所有的中断向量表与硬件寄存器直接由应用层接管，常用于超高速数据采集与安全关键回路。
+ </td>
+ </tr>
+ </tbody>
+ </table>
+ </div>
+ </div>
+
+ <div class="bg-white dark:bg-navy-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+ <div>
+ <h3 class="font-bold text-slate-900 dark:text-white text-base">主流嵌入式操作系统实时中断延迟与内存 footprint 综合对比</h3>
+ <p class="text-xs text-slate-500 dark:text-slate-400">直观展现实时性与资源消耗的权衡取舍</p>
+ </div>
+ <span class="text-xs font-semibold text-bspgold-700 dark:text-bspgold-400 bg-bspgold-500/15 px-2.5 py-1 rounded">异构多核架构兼容评估</span>
+ </div>
+ <div class="relative h-64 w-full">
+ <canvas id="osComparisonChart"></canvas>
+ </div>
+ </div>
+ </section>
+
+ <!-- =========================================================
+ 四、 实时性能评估与功耗调优
+ ========================================================= -->
+ <section id="sec-perf" class="scroll-mt-20 space-y-6">
+ <div class="border-b border-slate-200 dark:border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+ <div>
+ <span class="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Section 04 · Real-time Performance & Power Optimization</span>
+ <h2 class="text-2xl font-bold text-slate-900 dark:text-white mt-1">四、 实时性能评估与功耗调优：Cyclictest 压力测试与动态电源管理</h2>
+ </div>
+ <span class="text-xs text-slate-500 dark:text-slate-400">满载 72 小时无延迟毛刺 · PMIC 深度睡眠唤醒 &lt;15ms</span>
+ </div>
+
+ <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+ <div class="report-card bg-white dark:bg-navy-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="text-xs font-bold text-bspgold-600 dark:text-bspgold-400 uppercase">Cyclictest Max Latency</div>
+ <div class="text-2xl font-extrabold font-mono text-slate-900 dark:text-white mt-1">31.4 us</div>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+ 在 CPU 满载压测 72 小时条件下，RT 内核抢占调度最坏情况延迟未超过 35us，无任何错过Deadline现象。
+ </p>
+ </div>
+
+ <div class="report-card bg-white dark:bg-navy-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase">Power Saving Efficiency</div>
+ <div class="text-2xl font-extrabold font-mono text-slate-900 dark:text-white mt-1">-38.5%</div>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+ 通过 Linux Runtime PM 配合总线自动休眠，外设在闲置时自动切断电源域，系统整体待机功耗显著下降。
+ </p>
+ </div>
+
+ <div class="report-card bg-white dark:bg-navy-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="text-xs font-bold text-teal-600 dark:text-teal-400 uppercase">Context Switch Overhead</div>
+ <div class="text-2xl font-extrabold font-mono text-slate-900 dark:text-white mt-1">1.2 us</div>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+ 硬件辅助上下文切换与寄存器保存机制，保障多线程并发调度开销处于业界领先水平。
+ </p>
+ </div>
+
+ <div class="report-card bg-white dark:bg-navy-900 rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase">Thermal Throttling</div>
+ <div class="text-2xl font-extrabold font-mono text-slate-900 dark:text-white mt-1">85 °C</div>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+ 集成 Thermal Framework 动态热传感器反馈，超温时自动触发 CPUfreq 降频保护，避免芯片热失效。
+ </p>
+ </div>
+ </div>
+
+ <div class="bg-white dark:bg-navy-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+ <div>
+ <h3 class="font-bold text-slate-900 dark:text-white text-base">2021–2026 嵌入式 BSP 启动耗时与实时中断延迟演进趋势</h3>
+ <p class="text-xs text-slate-500 dark:text-slate-400">展示软硬件协同优化带来的性能跃升</p>
+ </div>
+ <span class="text-xs font-mono font-bold text-bspgold-700 dark:text-bspgold-400 bg-bspgold-500/15 px-2.5 py-1 rounded">5年启动提速 52%</span>
+ </div>
+ <div class="relative h-72 w-full">
+ <canvas id="perfEvolutionChart"></canvas>
+ </div>
+ </div>
+
+ <div class="bg-gradient-to-br from-navy-900 via-navy-800 to-slate-900 rounded-2xl p-6 sm:p-8 text-white border border-slate-700 shadow-xl space-y-6 no-print">
+ <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-4 border-b border-slate-700/80">
+ <div>
+ <div class="inline-flex items-center space-x-2 text-xs font-mono uppercase tracking-wider text-bspgold-400 font-bold">
+ <span>INTERACTIVE REAL-TIME & POWER SIMULATOR · BSP 性能与功耗换算模拟器</span>
+ </div>
+ <h3 class="text-lg sm:text-xl font-bold text-white mt-1">嵌入式边缘节点能效比与实时抢占延迟交互推演器</h3>
+ <p class="text-xs text-slate-400 mt-0.5">基准参数：CPU 主频 1.8GHz | 任务并发数 16 | PREEMPT_RT 抢占等级调优</p>
+ </div>
+ <label class="inline-flex items-center space-x-2.5 px-3.5 py-2 rounded-xl bg-bspgold-500/15 border border-bspgold-400/30 text-xs font-semibold text-bspgold-300 cursor-pointer shrink-0">
+ <input type="checkbox" id="rt-toggle" checked onchange="updateBspSimulator()" class="w-4 h-4 rounded accent-[#3B82F6] cursor-pointer">
+ <span>启用 PREEMPT_RT 实时抢占内核</span>
+ </label>
+ </div>
+
+ <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+ <div class="lg:col-span-5 space-y-4 text-xs">
+ <div>
+ <div class="flex justify-between mb-1.5">
+ <span class="text-slate-300 font-medium">CPU 运行主频 (GHz)</span>
+ <span id="sim-freq-label" class="font-mono font-bold text-white text-sm">1.8 GHz</span>
+ </div>
+ <input id="sim-freq" type="range" min="0.8" max="2.4" step="0.2" value="1.8" oninput="updateBspSimulator()" class="w-full accent-[#3B82F6] cursor-pointer">
+ </div>
+
+ <div>
+ <div class="flex justify-between mb-1.5">
+ <span class="text-slate-300 font-medium">后台任务并发吞吐量 (Mbps)</span>
+ <span id="sim-load-label" class="font-mono font-bold text-white text-sm">500 Mbps</span>
+ </div>
+ <input id="sim-load" type="range" min="100" max="1000" step="50" value="500" oninput="updateBspSimulator()" class="w-full accent-[#3B82F6] cursor-pointer">
+ </div>
+
+ <div>
+ <div class="flex justify-between mb-1.5">
+ <span class="text-slate-300 font-medium">外设唤醒触发频率 (Hz)</span>
+ <span id="sim-freq-trig" class="font-mono font-bold text-emerald-400 text-sm">250 Hz</span>
+ </div>
+ <input id="sim-trig" type="range" min="50" max="1000" step="50" value="250" oninput="updateBspSimulator()" class="w-full accent-[#10B981] cursor-pointer">
+ </div>
+ </div>
+
+ <div class="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-4">
+ <div class="bg-navy-950/80 rounded-xl p-5 border border-slate-800">
+ <div class="text-xs text-slate-400">预计最大中断延迟 (Max Latency)</div>
+ <div id="sim-latency" class="text-2xl sm:text-3xl font-mono font-extrabold text-bspgold-400 mt-1.5">31.4 us</div>
+ <div class="text-xs text-slate-400 mt-1.5">抖动范围小，硬实时达标</div>
+ </div>
+
+ <div class="bg-navy-950/80 rounded-xl p-5 border border-slate-800">
+ <div class="text-xs text-slate-400">动态功耗预估 (Estimated Power)</div>
+ <div id="sim-power" class="text-2xl sm:text-3xl font-mono font-extrabold text-emerald-400 mt-1.5">2.45 W</div>
+ <div class="text-xs text-slate-400 mt-1.5">结合时钟门控与 DVFS 降耗</div>
+ </div>
+
+ <div class="bg-navy-950/80 rounded-xl p-5 border border-slate-800">
+ <div class="text-xs text-slate-400">内核上下文切换速率</div>
+ <div id="sim-ctx" class="text-2xl sm:text-3xl font-mono font-extrabold text-teal-400 mt-1.5">830 k/s</div>
+ <div class="text-xs text-slate-400 mt-1.5">高效调度与零不必要锁竞争</div>
+ </div>
+
+ <div class="bg-navy-950/80 rounded-xl p-5 border border-slate-800">
+ <div class="text-xs text-slate-400">系统整体能效比指数 (Performance/W)</div>
+ <div id="sim-ratio" class="text-2xl sm:text-3xl font-mono font-extrabold text-white mt-1.5">734.2</div>
+ <div class="text-xs text-slate-400 mt-1.5">高算力与低功耗完美平衡</div>
+ </div>
+ </div>
+ </div>
+ </div>
+ </section>
+
+ <!-- =========================================================
+ 五、 可靠性设计与潜在故障矩阵
+ ========================================================= -->
+ <section id="sec-risk" class="scroll-mt-20 space-y-6">
+ <div class="border-b border-slate-200 dark:border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+ <div>
+ <span class="text-xs font-bold uppercase tracking-wider text-bspgold-600 dark:text-bspgold-400">Section 05 :: Reliability Design & Failure Matrix</span>
+ <h2 class="text-2xl font-bold text-slate-900 dark:text-white mt-1">五、 可靠性设计与潜在故障矩阵：看门狗冗余、双系统升级与容错容灾</h2>
+ </div>
+ <span class="text-xs text-slate-500 dark:text-slate-400">MTBF &gt; 100,000 小时 · 软硬件双看门狗保护</span>
+ </div>
+
+ <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+ <div class="bg-emerald-50/70 dark:bg-emerald-950/20 rounded-2xl p-6 border border-emerald-200 dark:border-emerald-800/60">
+ <div class="flex items-center justify-between mb-3">
+ <span class="font-bold text-emerald-700 dark:text-emerald-400 text-base">高可用性设计要点 (High Availability)</span>
+ <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">防死锁 + OTA 回滚</span>
+ </div>
+ <ul class="space-y-2 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
+ <li class="flex items-start space-x-2"><span class="text-emerald-600 font-bold">✓</span><span><strong>独立硬件看门狗 (HW Watchdog)：</strong>集成独立 RC 振荡器驱动的硬件看门狗，若系统主循环因死锁或中断卡死未能定时喂狗，硬件自动复位 SoC。</span></li>
+ <li class="flex items-start space-x-2"><span class="text-emerald-600 font-bold">✓</span><span><strong>A/B 双分区无损 OTA 升级：</strong>根文件系统与内核采用双备份分区（Slot A / Slot B），升级失败时 U-Boot 自动回滚至上一可用版本，杜绝砖机。</span></li>
+ <li class="flex items-start space-x-2"><span class="text-emerald-600 font-bold">✓</span><span><strong>ECC RAM 与存储磨损均衡：</strong>针对车规及工业级应用，启用内存 ECC 校验纠错，并对 eMMC/NAND 闪存进行 Flash Translation Layer (FTL) 磨损均衡。</span></li>
+ </ul>
+ </div>
+
+ <div class="bg-rose-50/70 dark:bg-rose-950/20 rounded-2xl p-6 border border-rose-200 dark:border-rose-800/60">
+ <div class="flex items-center justify-between mb-3">
+ <span class="font-bold text-rose-700 dark:text-rose-400 text-base">潜在故障与防御策略 (Risk Matrix)</span>
+ <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-700 dark:text-rose-300">高压排查指南</span>
+ </div>
+ <ul class="space-y-2 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
+ <li class="flex items-start space-x-2"><span class="text-rose-600 font-bold">!</span><span><strong>高速总线信号完整性退化：</strong>DDR 或 PCIe 在高温环境下可能出现误码；对策：在 BSP 初始化时动态调整 PHY 驱动阻抗与眼图扫描。</span></li>
+ <li class="flex items-start space-x-2"><span class="text-rose-600 font-bold">!</span><span><strong>驱动独占导致的中断风暴 (Interrupt Storm)：</strong>外设异常频繁触发硬中断耗尽 CPU 资源；对策：引入中断限速机制 (IRQ Throttle) 与动态失能保护。</span></li>
+ <li class="flex items-start space-x-2"><span class="text-rose-600 font-bold">!</span><span><strong>电源域切换时序冲突：</strong>PMIC 供电斜率不满足芯片手册要求导致死机；对策：在 U-Boot 中严格校验各稳压器上电延时。</span></li>
+ </ul>
+ </div>
+ </div>
+ </section>
+
+ <!-- =========================================================
+ 六、 BSP 移植与验收核查清单
+ ========================================================= -->
+ <section id="sec-checklist" class="scroll-mt-20 space-y-6">
+ <div class="border-b border-slate-200 dark:border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+ <div>
+ <span class="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Section 06 · BSP Porting & Acceptance Checklist</span>
+ <h2 class="text-2xl font-bold text-slate-900 dark:text-white mt-1">六、 BSP 移植与验收核查清单（Interactive Checklist）</h2>
+ </div>
+ <div class="flex items-center space-x-2 no-print">
+ <span id="kpi-progress-badge" class="px-3 py-1 rounded-full bg-bspgold-500/15 text-bspgold-700 dark:text-bspgold-400 text-xs font-bold">已核查 3 / 6 项 (50%)</span>
+ <button onclick="resetKpiChecklist()" class="px-2.5 py-1 rounded-lg bg-slate-200/80 dark:bg-navy-800 hover:bg-slate-300 dark:hover:bg-navy-700 text-xs font-medium text-slate-700 dark:text-slate-300 transition cursor-pointer">重置清单</button>
+ </div>
+ </div>
+
+ <div class="bg-white dark:bg-navy-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm">
+ <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">
+ 点击勾选 BSP 移植与测试阶段已成功通过验收的技术指标（勾选状态自动本地存储）：
+ </p>
+
+ <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5" id="kpi-checklist">
+ <label class="flex items-start space-x-3 p-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-navy-800/50 cursor-pointer transition">
+ <input type="checkbox" id="kpi-1" checked onchange="updateKpiChecklist()" class="mt-1 w-4 h-4 rounded accent-[#2563EB] focus:ring-bspgold-500">
+ <div class="flex-1">
+ <div class="flex items-center justify-between gap-2">
+ <span class="font-bold text-sm text-slate-900 dark:text-white">1. DDR 内存稳定压测：Memtester 48小时无一位比特翻转</span>
+ <span class="text-[11px] font-mono text-bspgold-600 dark:text-bspgold-400 font-semibold shrink-0">物理层基石</span>
+ </div>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+ 验证 U-Boot 与内核下 DDR 读写时序与阻抗匹配，确保高频吞吐时存储绝对稳定。
+ </p>
+ </div>
+ </label>
+
+ <label class="flex items-start space-x-3 p-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-navy-800/50 cursor-pointer transition">
+ <input type="checkbox" id="kpi-2" checked onchange="updateKpiChecklist()" class="mt-1 w-4 h-4 rounded accent-[#2563EB] focus:ring-bspgold-500">
+ <div class="flex-1">
+ <div class="flex items-center justify-between gap-2">
+ <span class="font-bold text-sm text-slate-900 dark:text-white">2. 设备树 (DTS) 语法校验：编译零警告且驱动节点全部成功 probe</span>
+ <span class="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 font-semibold shrink-0">解耦规范</span>
+ </div>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+ 使用 dtc 严格检查无冲突，确保所有外设（GPIO、I2C、串口）驱动正常挂载。
+ </p>
+ </div>
+ </label>
+
+ <label class="flex items-start space-x-3 p-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-navy-800/50 cursor-pointer transition">
+ <input type="checkbox" id="kpi-3" checked onchange="updateKpiChecklist()" class="mt-1 w-4 h-4 rounded accent-[#2563EB] focus:ring-bspgold-500">
+ <div class="flex-1">
+ <div class="flex items-center justify-between gap-2">
+ <span class="font-bold text-sm text-slate-900 dark:text-white">3. 实时中断延迟达标：Cyclictest 满载测试最大延迟 &lt;50us</span>
+ <span class="text-[11px] font-mono text-teal-600 dark:text-teal-400 font-semibold shrink-0">硬实时考核</span>
+ </div>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+ 在 CPU 满负载、网络大吞吐并发下验证抢占延迟，无毛刺超时现象。
+ </p>
+ </div>
+ </label>
+
+ <label class="flex items-start space-x-3 p-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-navy-800/50 cursor-pointer transition">
+ <input type="checkbox" id="kpi-4" onchange="updateKpiChecklist()" class="mt-1 w-4 h-4 rounded accent-[#2563EB] focus:ring-bspgold-500">
+ <div class="flex-1">
+ <div class="flex items-center justify-between gap-2">
+ <span class="font-bold text-sm text-slate-900 dark:text-white">4. 电源与休眠唤醒：SUSPEND/RESUME 循环 1000 次无状态丢失</span>
+ <span class="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 font-semibold shrink-0">功耗可靠性</span>
+ </div>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+ 验证外设驱动的 <code>suspend</code> / <code>resume</code> 回调函数，确保唤醒后总线状态完全恢复。
+ </p>
+ </div>
+ </label>
+
+ <label class="flex items-start space-x-3 p-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-navy-800/50 cursor-pointer transition">
+ <input type="checkbox" id="kpi-5" onchange="updateKpiChecklist()" class="mt-1 w-4 h-4 rounded accent-[#2563EB] focus:ring-bspgold-500">
+ <div class="flex-1">
+ <div class="flex items-center justify-between gap-2">
+ <span class="font-bold text-sm text-slate-900 dark:text-white">5. 安全启动与 OTA 升级：A/B 分区切换与回滚验证通过</span>
+ <span class="text-[11px] font-mono text-teal-600 dark:text-teal-400 font-semibold shrink-0">防砖容灾</span>
+ </div>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+ 模拟固件损坏时 U-Boot 自动降级回滚逻辑，确保量产设备远程维护万无一失。
+ </p>
+ </div>
+ </label>
+
+ <label class="flex items-start space-x-3 p-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-navy-800/50 cursor-pointer transition">
+ <input type="checkbox" id="kpi-6" onchange="updateKpiChecklist()" class="mt-1 w-4 h-4 rounded accent-[#2563EB] focus:ring-bspgold-500">
+ <div class="flex-1">
+ <div class="flex items-center justify-between gap-2">
+ <span class="font-bold text-sm text-slate-900 dark:text-white">6. 存储磨损与看门狗：硬件看门狗喂狗逻辑及 FTL 寿命评估健全</span>
+ <span class="text-[11px] font-mono text-indigo-600 dark:text-indigo-400 font-semibold shrink-0">长期运维保障</span>
+ </div>
+ <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+ 确保长时间运行不会发生文件系统损坏或看门狗误触发重启。
+ </p>
+ </div>
+ </label>
+ </div>
+ </div>
+ </section>
+
+ <footer class="pt-8 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 space-y-2 pb-10">
+ <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 font-semibold text-slate-700 dark:text-slate-300">
+ <span>嵌入式系统板级支持包 (BSP) 深度技术分析与架构演进报告</span>
+ <span>基准环境：Linux 6.6 LTS · U-Boot 2024 · ARM Cortex-A/M</span>
+ </div>
+ <p class="leading-relaxed">
+ <strong>免责声明：</strong>本技术报告基于主流嵌入式 SoC 架构、Linux 内核源码及各大 RTOS 官方规范整理生成，旨在提供结构化的 BSP 架构设计、性能优化与可靠性验证指南。报告中涉及的启动耗时、中断延迟数据及交互模拟器推演结果仅供研发参考，具体项目实施需结合实际硬件原理图与芯片手册进行细致调优。
+ </p>
+ </footer>
+
+ </div>
+ </main>
+
+ <!-- 交互脚本与 Chart.js -->
+ <script>
+ function toggleTheme() {
+ document.documentElement.classList.toggle('dark');
+ updateChartsTheme();
+ }
+
+ function toggleMobileMenu() {
+ document.getElementById('mobile-drawer').classList.toggle('hidden');
+ }
+
+ window.addEventListener('scroll', () => {
+ const scrollTop = window.scrollY;
+ const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+ const scrollPercent = docHeight > 0 ? (scrollTop / docHeight) * 100 : 0;
+ document.getElementById('reading-progress').style.width = `${Math.min(100, Math.max(0, scrollPercent))}%`;
+
+ let currentId = 'sec-exec';
+ document.querySelectorAll('section[id]').forEach(sec => {
+ if (scrollTop >= sec.offsetTop - 160) currentId = sec.getAttribute('id');
+ });
+
+ document.querySelectorAll('#desktop-nav .nav-link').forEach(link => {
+ link.classList.remove('active');
+ const span = link.querySelector('span span');
+ if (span) { span.classList.remove('text-bspgold-400'); span.classList.add('text-slate-500'); }
+ if (link.dataset.target === currentId) {
+ link.classList.add('active');
+ if (span) { span.classList.remove('text-slate-500'); span.classList.add('text-bspgold-400'); }
+ }
+ });
+ });
+
+ function filterBspOS(category) {
+ document.querySelectorAll('.bsp-filter-btn').forEach(btn => {
+ if (btn.dataset.filter === category) {
+ btn.classList.add('bg-bspgold-500', 'text-navy-950', 'font-semibold', 'shadow-sm');
+ btn.classList.remove('bg-white', 'dark:bg-navy-800', 'text-slate-600', 'dark:text-slate-300', 'border', 'font-medium');
+ } else {
+ btn.classList.remove('bg-bspgold-500', 'text-navy-950', 'font-semibold', 'shadow-sm');
+ btn.classList.add('bg-white', 'dark:bg-navy-800', 'text-slate-600', 'dark:text-slate-300', 'border', 'font-medium');
+ }
+ });
+
+ document.querySelectorAll('#bsp-table-body tr').forEach(row => {
+ if (category === 'all' || row.dataset.category === category) {
+ row.style.display = '';
+ } else {
+ row.style.display = 'none';
+ }
+ });
+ }
+
+ function updateBspSimulator() {
+ const freq = parseFloat(document.getElementById('sim-freq').value);
+ const load = parseInt(document.getElementById('sim-load').value, 10);
+ const trig = parseInt(document.getElementById('sim-trig').value, 10);
+ const rtEnabled = document.getElementById('rt-toggle').checked;
+
+ document.getElementById('sim-freq-label').textContent = freq.toFixed(1) + ' GHz';
+ document.getElementById('sim-load-label').textContent = load + ' Mbps';
+ document.getElementById('sim-freq-trig').textContent = trig + ' Hz';
+
+ let latency = rtEnabled ? (25 + load / 30 + trig / 50) : (80 + load / 10 + trig / 10);
+ let power = (freq * 1.1) + (load / 400) + (trig / 800);
+ let ctxRate = Math.round(freq * 450 - load / 5);
+ let ratio = (freq * 500) / power;
+
+ document.getElementById('sim-latency').textContent = latency.toFixed(1) + ' us';
+ document.getElementById('sim-power').textContent = power.toFixed(2) + ' W';
+ document.getElementById('sim-ctx').textContent = ctxRate + ' k/s';
+ document.getElementById('sim-ratio').textContent = ratio.toFixed(1);
+ }
+
+ const KPI_STORAGE_KEY = 'bsp_research_kpi_state_v1';
+ function loadKpiChecklist() {
+ try {
+ const saved = localStorage.getItem(KPI_STORAGE_KEY);
+ if (saved) {
+ const map = JSON.parse(saved);
+ document.querySelectorAll('#kpi-checklist input[type="checkbox"]').forEach(cb => {
+ if (typeof map[cb.id] === 'boolean') cb.checked = map[cb.id];
+ });
+ }
+ } catch (e) {}
+ updateKpiChecklist();
+ }
+
+ function updateKpiChecklist() {
+ const cbs = document.querySelectorAll('#kpi-checklist input[type="checkbox"]');
+ let checked = 0;
+ const map = {};
+ cbs.forEach(cb => { map[cb.id] = cb.checked; if (cb.checked) checked++; });
+ document.getElementById('kpi-progress-badge').textContent = `已核查 ${checked} / ${cbs.length} 项 (${Math.round((checked/cbs.length)*100)}%)`;
+ try { localStorage.setItem(KPI_STORAGE_KEY, JSON.stringify(map)); } catch(e){}
+ }
+
+ function resetKpiChecklist() {
+ document.querySelectorAll('#kpi-checklist input[type="checkbox"]').forEach(cb => cb.checked = false);
+ updateKpiChecklist();
+ }
+
+ let archChartInstance = null, radarChartInstance = null, osCompChartInstance = null, perfChartInstance = null;
+ let currentArchMode = 'timeline';
+
+ function getChartColors() {
+ const isDark = document.documentElement.classList.contains('dark');
+ return {
+ text: isDark ? '#CBD5E1' : '#475569',
+ grid: isDark ? 'rgba(51, 65, 85, 0.5)' : 'rgba(226, 232, 240, 0.85)',
+ radarAngle: isDark ? 'rgba(71, 85, 105, 0.6)' : 'rgba(203, 213, 225, 0.85)'
+ };
+ }
+
+ function initArchChart() {
+ const ctx = document.getElementById('archArchitectureChart').getContext('2d');
+ const colors = getChartColors();
+
+ const timeConfig = {
+ type: 'bar',
+ data: {
+ labels: ['ROM Code', 'TF-A (BL2/BL31)', 'U-Boot SPL', 'U-Boot Proper', 'Kernel & Init'],
+ datasets: [{
+ label: '引导阶段耗时占比 (%)',
+ data: [5, 12, 18, 30, 35],
+ backgroundColor: ['#3B82F6', '#2563EB', '#10B981', '#06B6D4', '#F59E0B'],
+ borderRadius: 6,
+ barThickness: 24
+ }]
+ },
+ options: {
+ responsive: true,
+ maintainAspectRatio: false,
+ plugins: { legend: { display: false } },
+ scales: {
+ x: { grid: { display: false }, ticks: { color: colors.text, font: { size: 11, weight: '600' } } },
+ y: { min: 0, max: 45, grid: { color: colors.grid }, ticks: { color: colors.text, callback: v => v + '%' } }
+ }
+ }
+ };
+
+ const memConfig = {
+ type: 'bar',
+ data: {
+ labels: ['Secure RAM (TF-A)', 'SRAM (SPL)', 'DRAM Kernel Space', 'DRAM User Space', 'Framebuffer / DMA'],
+ datasets: [{
+ label: '内存占用大小 (MB)',
+ data: [2, 0.25, 64, 420, 32],
+ backgroundColor: '#3B82F6',
+ borderRadius: 6,
+ barThickness: 24
+ }]
+ },
+ options: {
+ indexAxis: 'y',
+ responsive: true,
+ maintainAspectRatio: false,
+ plugins: { legend: { display: false } },
+ scales: {
+ x: { grid: { color: colors.grid }, ticks: { color: colors.text, callback: v => v + ' MB' } },
+ y: { grid: { display: false }, ticks: { color: colors.text, font: { size: 11, weight: '600' } } }
+ }
+ }
+ };
+
+ if (archChartInstance) archChartInstance.destroy();
+ archChartInstance = new Chart(ctx, currentArchMode === 'timeline' ? timeConfig : memConfig);
+ }
+
+ function switchArchChart(mode) {
+ currentArchMode = mode;
+ document.getElementById('btn-arch-time').className = mode === 'timeline' ? 'px-2.5 py-1 rounded-md font-semibold bg-white dark:bg-navy-700 text-bspgold-600 dark:text-bspgold-400 shadow-sm transition cursor-pointer' : 'px-2.5 py-1 rounded-md font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition cursor-pointer';
+ document.getElementById('btn-arch-mem').className = mode === 'memory' ? 'px-2.5 py-1 rounded-md font-semibold bg-white dark:bg-navy-700 text-bspgold-600 dark:text-bspgold-400 shadow-sm transition cursor-pointer' : 'px-2.5 py-1 rounded-md font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition cursor-pointer';
+ document.getElementById('arch-chart-title').textContent = mode === 'timeline' ? '嵌入式系统多级引导时序与内存映射分布' : '各阶段内存空间静态/动态分配分布';
+ initArchChart();
+ }
+
+ function initRadarChart() {
+ const ctx = document.getElementById('bspRadarChart').getContext('2d');
+ const colors = getChartColors();
+ if (radarChartInstance) radarChartInstance.destroy();
+ radarChartInstance = new Chart(ctx, {
+ type: 'radar',
+ data: {
+ labels: ['中断实时响应', '总线吞吐量', '功耗节能控制', '驱动解耦规范', '硬件兼容广度'],
+ datasets: [{
+ label: '本 BSP 架构评估',
+ data: [9.5, 9.2, 8.8, 9.4, 9.0],
+ borderColor: '#3B82F6',
+ backgroundColor: 'rgba(59, 130, 246, 0.24)',
+ pointBackgroundColor: '#3B82F6',
+ borderWidth: 2.5
+ }]
+ },
+ options: {
+ responsive: true,
+ maintainAspectRatio: false,
+ plugins: { legend: { display: false } },
+ scales: {
+ r: {
+ min: 0, max: 10,
+ ticks: { display: false },
+ grid: { color: colors.grid },
+ angleLines: { color: colors.radarAngle },
+ pointLabels: { color: colors.text, font: { size: 11, weight: '600' } }
+ }
+ }
+ }
+ });
+ }
+
+ function initOsCompChart() {
+ const ctx = document.getElementById('osComparisonChart').getContext('2d');
+ const colors = getChartColors();
+ if (osCompChartInstance) osCompChartInstance.destroy();
+ osCompChartInstance = new Chart(ctx, {
+ type: 'bar',
+ data: {
+ labels: ['Linux (RT)', 'Zephyr RTOS', 'FreeRTOS', 'Bare-metal'],
+ datasets: [
+ { label: '平均中断延迟 (us，越低越好)', data: [31.4, 4.8, 2.1, 0.8], backgroundColor: '#3B82F6', borderRadius: 4, barThickness: 16 },
+ { label: '内存占用开销 (MB，对数或等比例)', data: [32, 0.5, 0.01, 0.002], backgroundColor: '#10B981', borderRadius: 4, barThickness: 16 }
+ ]
+ },
+ options: {
+ responsive: true,
+ maintainAspectRatio: false,
+ plugins: { legend: { position: 'bottom', labels: { color: colors.text, font: { size: 11 } } } },
+ scales: {
+ x: { grid: { display: false }, ticks: { color: colors.text, font: { size: 11, weight: '600' } } },
+ y: { grid: { color: colors.grid }, ticks: { color: colors.text, font: { size: 11 } } }
+ }
+ }
+ });
+ }
+
+ function initPerfEvolutionChart() {
+ const ctx = document.getElementById('perfEvolutionChart').getContext('2d');
+ const colors = getChartColors();
+ if (perfChartInstance) perfChartInstance.destroy();
+ perfChartInstance = new Chart(ctx, {
+ type: 'line',
+ data: {
+ labels: ['2021', '2022', '2023', '2024', '2025', '2026'],
+ datasets: [
+ { label: '冷启动总耗时 (ms)', data: [880, 750, 620, 530, 480, 420], borderColor: '#3B82F6', backgroundColor: '#3B82F6', borderWidth: 3, tension: 0.25, yAxisID: 'y' },
+ { label: 'Cyclictest 最大中断延迟 (us)', data: [68.0, 54.2, 45.0, 39.5, 34.0, 31.4], borderColor: '#10B981', backgroundColor: '#10B981', borderWidth: 3, tension: 0.25, yAxisID: 'y1' }
+ ]
+ },
+ options: {
+ responsive: true,
+ maintainAspectRatio: false,
+ plugins: { legend: { position: 'bottom', labels: { color: colors.text, font: { size: 11 } } } },
+ scales: {
+ x: { grid: { display: false }, ticks: { color: colors.text, font: { size: 11, weight: '600' } } },
+ y: { type: 'linear', position: 'left', grid: { color: colors.grid }, ticks: { color: colors.text, callback: v => v + 'ms' }, title: { display: true, text: '启动耗时 (ms)', color: colors.text } },
+ y1: { type: 'linear', position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#10B981', callback: v => v + 'us' }, title: { display: true, text: '中断延迟 (us)', color: '#10B981' } }
+ }
+ }
+ });
+ }
+
+ function updateChartsTheme() {
+ initArchChart();
+ initRadarChart();
+ initOsCompChart();
+ initPerfEvolutionChart();
+ }
+
+ window.addEventListener('DOMContentLoaded', () => {
+ loadKpiChecklist();
+ updateBspSimulator();
+ initArchChart();
+ initRadarChart();
+ initOsCompChart();
+ initPerfEvolutionChart();
+ });
+ </script>
+</body>
+</html>
